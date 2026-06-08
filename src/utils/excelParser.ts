@@ -29,7 +29,7 @@ export const parseExcelData = async (): Promise<{ accounts: AccountData[], globa
     const transWb = XLSX.read(transBuf);
     const gestWb = XLSX.read(gestBuf);
 
-    const transData: any[] = XLSX.utils.sheet_to_json(transWb.Sheets[transWb.SheetNames[1] || transWb.SheetNames[0]]);
+    XLSX.utils.sheet_to_json(transWb.Sheets[transWb.SheetNames[1] || transWb.SheetNames[0]]);
     const gestData: any[] = XLSX.utils.sheet_to_json(gestWb.Sheets[gestWb.SheetNames[0]]);
 
     const accountMap = new Map<string, AccountData>();

@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { parseExcelData, AccountData, GlobalMetrics } from './utils/excelParser';
+import { parseExcelData } from './utils/excelParser';
+import type { AccountData, GlobalMetrics } from './utils/excelParser';
 import { motion, AnimatePresence } from 'framer-motion';
-import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
-import { Activity, CheckCircle, XCircle, Users, ChevronRight, Briefcase } from 'lucide-react';
+import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
+import { Activity, CheckCircle, Users, ChevronRight, Briefcase } from 'lucide-react';
 
 const App: React.FC = () => {
   const [data, setData] = useState<{ accounts: AccountData[], global: GlobalMetrics } | null>(null);
