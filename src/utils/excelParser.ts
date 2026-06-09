@@ -2,106 +2,141 @@ import * as XLSX from 'xlsx';
 
 export interface AccountData {
   name: string;
-  totalServices: number;
+  total: number;
   concluded: number;
   cancelled: number;
+  inProcess: number;
   isAdministrative: boolean;
 }
 
 export interface FamilyData {
-    name: string;
-    totalServices: number;
-    concluded: number;
-    cancelled: number;
-    accounts: AccountData[];
+  name: string;
+  total: number;
+  concluded: number;
+  cancelled: number;
+  inProcess: number;
+  accounts: AccountData[];
 }
 
 export interface GlobalMetrics {
-  totalServices: number;
-  totalConcluded: number;
-  totalCancelled: number;
+  total: number;
+  concluded: number;
+  cancelled: number;
+  inProcess: number;
   families: FamilyData[];
 }
 
-const mapToFamily = (serviceType: string): string => {
-    const type = serviceType.toUpperCase();
-    if (type.includes('PREVENCIÓN') || type.includes('RESTAURACIÓN') || type.includes('DENTAL')) return 'Dental';
-    if (type.includes('VEHICULAR') || type.includes('REMOLQUE') || type.includes('VIAL')) return 'Vial';
-    if (type.includes('PLOMERÍA') || type.includes('ELECTRICIDAD') || type.includes('CERRAJERÍA') || type.includes('HOGAR')) return 'Hogar';
-    return 'Otros';
+const FAMILY_ORDER = ['DENTAL', 'HOGAR', 'VEHICULAR', 'MÉDICA', 'REFERENCIAS', 'VARIOS', 'LEGAL'];
+
+const normalizeFamily = (raw: string): string => {
+  const up = (raw || '').toUpperCase().trim();
+  if (up === 'MEDICA') return 'MÉDICA';
+  if (up === 'FAMILIA GENERAL') return 'VARIOS';
+  return up || 'VARIOS';
 };
 
 export const parseExcelData = async (): Promise<GlobalMetrics> => {
   try {
-    const gestRes = await fetch('./data/gestion.xlsx');
-    const gestBuf = await gestRes.arrayBuffer();
+    const res = await fetch('./data/transference.xlsx');
+    const buf = await res.arrayBuffer();
+    const wb = XLSX.read(buf);
+    const rows: Record<string, string>[] = XLSX.utils.sheet_to_json(wb.Sheets['Sheet1']);
 
-    const gestWb = XLSX.read(gestBuf);
-    const summarySheet = gestWb.Sheets['# asist Dic'];
-    const summaryData: any[][] = XLSX.utils.sheet_to_json(summarySheet, { header: 1 });
-    
-    const familiesMap = new Map<string, FamilyData>();
-    ['Dental', 'Vial', 'Hogar', 'Otros'].forEach(name => {
-        familiesMap.set(name, { name, totalServices: 0, concluded: 0, cancelled: 0, accounts: [] });
-    });
+    const accountStats = new Map<string, AccountData>();
+    const familyStats = new Map<string, { total: number; concluded: number; cancelled: number; inProcess: number }>();
+    // Track how many services each account has in each family (for dominant-family assignment)
+    const accountFamilyCount = new Map<string, Map<string, number>>();
 
-    const accountMap = new Map<string, AccountData>();
+    for (const row of rows) {
+      const account = (row['Nombre_Cuenta'] as unknown as string) || '';
+      if (!account) continue;
+      const upper = account.toUpperCase();
+      if (upper.includes('GENERAL MOTORS') || upper.includes('IKATECH')) continue;
 
-    for (let i = 2; i < summaryData.length; i++) {
-        const row = summaryData[i];
-        if (!row) continue;
-        const name = row[0];
-        const count = parseInt(row[1]) || 0;
-        
-        if (name && typeof name === 'string' && name.trim()) {
-            const cleanName = name.trim();
-            const acc: AccountData = {
-                name: cleanName,
-                totalServices: count,
-                concluded: Math.round(count * 0.88),
-                cancelled: Math.round(count * 0.12),
-                isAdministrative: cleanName.toUpperCase().includes('VIDANOVA') || cleanName.toUpperCase().includes('GENERAL MOTORS')
-            };
-            accountMap.set(cleanName, acc);
-        }
+      const estado = (row['Estado_de_Asistencia'] as unknown as string) || '';
+      const family = normalizeFamily((row['Familia_Servicio'] as unknown as string) || '');
+
+      // ── Account stats ──
+      if (!accountStats.has(account)) {
+        accountStats.set(account, {
+          name: account,
+          total: 0, concluded: 0, cancelled: 0, inProcess: 0,
+          isAdministrative: account.toUpperCase().includes('VIDANOVA'),
+        });
+      }
+      const acc = accountStats.get(account)!;
+      acc.total++;
+      if (estado === 'CONCLUIDA') acc.concluded++;
+      else if (estado.startsWith('CANCELADO')) acc.cancelled++;
+      else acc.inProcess++;
+
+      // ── Family stats ──
+      if (!familyStats.has(family)) {
+        familyStats.set(family, { total: 0, concluded: 0, cancelled: 0, inProcess: 0 });
+      }
+      const fam = familyStats.get(family)!;
+      fam.total++;
+      if (estado === 'CONCLUIDA') fam.concluded++;
+      else if (estado.startsWith('CANCELADO')) fam.cancelled++;
+      else fam.inProcess++;
+
+      // ── Dominant-family tracking ──
+      if (!accountFamilyCount.has(account)) accountFamilyCount.set(account, new Map());
+      const afc = accountFamilyCount.get(account)!;
+      afc.set(family, (afc.get(family) || 0) + 1);
     }
 
-    for (let i = 2; i < summaryData.length; i++) {
-        const row = summaryData[i];
-        if (!row) continue;
-        const serviceType = row[3];
-        const serviceCount = parseInt(row[4]) || 0;
-        
-        if (serviceType) {
-            const familyName = mapToFamily(serviceType.toString());
-            const family = familiesMap.get(familyName)!;
-            family.totalServices += serviceCount;
-            family.concluded += Math.round(serviceCount * 0.88);
-            family.cancelled += Math.round(serviceCount * 0.12);
-        }
-    }
-
-    const accounts = Array.from(accountMap.values()).sort((a, b) => b.totalServices - a.totalServices);
-    accounts.forEach((acc, idx) => {
-        if (acc.isAdministrative) {
-            familiesMap.get('Otros')!.accounts.push(acc);
-            return;
-        }
-        const families = ['Dental', 'Vial', 'Hogar'];
-        const familyName = families[idx % families.length];
-        familiesMap.get(familyName)!.accounts.push(acc);
+    // Assign each account to its dominant family
+    const accountToFamily = new Map<string, string>();
+    accountFamilyCount.forEach((famCounts, account) => {
+      let dominant = 'VARIOS';
+      let max = 0;
+      famCounts.forEach((count, fam) => { if (count > max) { max = count; dominant = fam; } });
+      accountToFamily.set(account, dominant);
     });
 
-    const finalFamilies = Array.from(familiesMap.values());
+    // Build FamilyData objects (seeded from real family stats)
+    const familyObjects = new Map<string, FamilyData>();
+    familyStats.forEach((stats, name) => {
+      familyObjects.set(name, { name, ...stats, accounts: [] });
+    });
 
-    return {
-      totalServices: finalFamilies.reduce((sum, f) => sum + f.totalServices, 0),
-      totalConcluded: finalFamilies.reduce((sum, f) => sum + f.concluded, 0),
-      totalCancelled: finalFamilies.reduce((sum, f) => sum + f.cancelled, 0),
-      families: finalFamilies
-    };
-  } catch (error) {
-    console.error('Error parsing excel files:', error);
-    return { totalServices: 0, totalConcluded: 0, totalCancelled: 0, families: [] };
+    // Place accounts into families, sorted by total descending
+    Array.from(accountStats.values())
+      .sort((a, b) => b.total - a.total)
+      .forEach(acc => {
+        const fam = accountToFamily.get(acc.name) || 'VARIOS';
+        if (!familyObjects.has(fam)) {
+          familyObjects.set(fam, { name: fam, total: 0, concluded: 0, cancelled: 0, inProcess: 0, accounts: [] });
+        }
+        familyObjects.get(fam)!.accounts.push(acc);
+      });
+
+    // Sort families by predefined order, then by total
+    const families = Array.from(familyObjects.values())
+      .filter(f => f.total > 0)
+      .sort((a, b) => {
+        const ai = FAMILY_ORDER.indexOf(a.name);
+        const bi = FAMILY_ORDER.indexOf(b.name);
+        if (ai >= 0 && bi >= 0) return ai - bi;
+        if (ai >= 0) return -1;
+        if (bi >= 0) return 1;
+        return b.total - a.total;
+      });
+
+    const totals = families.reduce(
+      (acc, f) => ({
+        total: acc.total + f.total,
+        concluded: acc.concluded + f.concluded,
+        cancelled: acc.cancelled + f.cancelled,
+        inProcess: acc.inProcess + f.inProcess,
+      }),
+      { total: 0, concluded: 0, cancelled: 0, inProcess: 0 }
+    );
+
+    return { ...totals, families };
+  } catch (err) {
+    console.error('Error parsing data:', err);
+    return { total: 0, concluded: 0, cancelled: 0, inProcess: 0, families: [] };
   }
 };
