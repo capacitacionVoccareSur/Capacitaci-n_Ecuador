@@ -1,9 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Home, Car, Heart, Phone, Scale, Layers, Smile } from 'lucide-react';
-import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-} from 'recharts';
 import { parseExcelData } from './utils/excelParser';
 import type { GlobalMetrics, FamilyData, AccountData } from './utils/excelParser';
 
@@ -98,14 +95,7 @@ const App: React.FC = () => {
       {/* ── Family Distribution ── */}
       <section className="mb-8">
         <SectionLabel>Distribución por Familia de Servicio</SectionLabel>
-        <div className="mt-3 rounded-2xl border border-white/5 bg-slate-900/40 p-4 md:p-6">
-          <div className="mb-4 flex flex-wrap items-center gap-4 text-[9px] font-bold uppercase tracking-widest text-slate-500">
-            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-emerald-500" />Concluidas</span>
-            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-rose-500" />Canceladas</span>
-            <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-amber-500" />En proceso</span>
-          </div>
-          <FamilyRechartsChart families={data.families} />
-        </div>
+        <FamilyDistributionGrid families={data.families} globalTotal={data.total} />
       </section>
 
       {/* ── Accounts per Family ── */}
@@ -164,64 +154,73 @@ const KpiCard: React.FC<{
   </motion.div>
 );
 
-// ─── FamilyRechartsChart ──────────────────────────────────────────
-interface ChartTooltipProps {
-  active?: boolean;
-  payload?: Array<{ name: string; value: number; fill: string }>;
-  label?: string;
-}
+// ─── FamilyDistributionGrid ───────────────────────────────────────
+const FamilyDistributionGrid: React.FC<{ families: FamilyData[]; globalTotal: number }> = ({
+  families, globalTotal,
+}) => (
+  <div className="mt-3 grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))' }}>
+    {families.map((family, i) => {
+      const { label, Icon, color } = fcfg(family.name);
+      const globalPct    = globalTotal > 0 ? (family.total / globalTotal) * 100 : 0;
+      const concludedPct = family.total > 0 ? (family.concluded / family.total) * 100 : 0;
+      const cancelledPct = family.total > 0 ? (family.cancelled / family.total) * 100 : 0;
+      const processPct   = Math.max(0, 100 - concludedPct - cancelledPct);
+      const efficiency   = family.total > 0 ? Math.round(concludedPct) : 0;
 
-const ChartTooltip: React.FC<ChartTooltipProps> = ({ active, payload, label }) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-xs shadow-xl">
-      <p className="mb-2 font-black uppercase tracking-widest text-slate-400">{label}</p>
-      {payload.map(p => (
-        <p key={p.name} className="flex items-center gap-2 font-bold text-white">
-          <span className="inline-block h-2 w-2 rounded-full" style={{ background: p.fill }} />
-          {p.name}: <span style={{ color: p.fill }}>{p.value}</span>
-        </p>
-      ))}
-    </div>
-  );
-};
+      return (
+        <motion.div
+          key={family.name}
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: i * 0.05 }}
+          className="rounded-2xl border border-white/5 bg-slate-900/60 p-4"
+          style={{ borderTop: `2px solid ${color}` }}
+        >
+          {/* Icon + name */}
+          <div className="mb-3 flex items-center gap-2">
+            <div
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
+              style={{ background: `${color}1a`, border: `1px solid ${color}30` }}
+            >
+              <Icon size={13} style={{ color }} />
+            </div>
+            <span className="text-xs font-bold text-slate-300">{label}</span>
+          </div>
 
-const FamilyRechartsChart: React.FC<{ families: FamilyData[] }> = ({ families }) => {
-  const chartData = families.map(f => ({
-    name: fcfg(f.name).label,
-    Concluidas: f.concluded,
-    Canceladas: f.cancelled,
-    'En proceso': f.inProcess,
-  }));
+          {/* Total + % of global */}
+          <div className="mb-3 flex items-end justify-between gap-2">
+            <p className="text-3xl font-black text-white leading-none">{family.total}</p>
+            <span
+              className="mb-0.5 shrink-0 rounded-full px-2 py-0.5 text-[11px] font-black"
+              style={{ background: `${color}20`, color }}
+            >
+              {globalPct.toFixed(1)}% del total
+            </span>
+          </div>
 
-  const rowHeight = 52;
-  const height = families.length * rowHeight + 20;
+          {/* Stacked bar */}
+          <div className="mb-2 flex h-1.5 overflow-hidden rounded-full bg-white/[0.05]">
+            <div className="h-full" style={{ width: `${concludedPct}%`, background: '#10b981' }} />
+            <div className="h-full" style={{ width: `${cancelledPct}%`, background: '#f43f5e' }} />
+            <div className="h-full" style={{ width: `${processPct}%`, background: '#f59e0b' }} />
+          </div>
 
-  return (
-    <ResponsiveContainer width="100%" height={height}>
-      <BarChart
-        data={chartData}
-        layout="vertical"
-        margin={{ top: 0, right: 16, left: 0, bottom: 0 }}
-        barSize={14}
-      >
-        <XAxis type="number" hide />
-        <YAxis
-          type="category"
-          dataKey="name"
-          width={90}
-          tick={{ fill: '#94a3b8', fontSize: 11, fontWeight: 700 }}
-          axisLine={false}
-          tickLine={false}
-        />
-        <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(255,255,255,0.03)' }} />
-        <Bar dataKey="Concluidas" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} />
-        <Bar dataKey="Canceladas" stackId="a" fill="#f43f5e" radius={[0, 0, 0, 0]} />
-        <Bar dataKey="En proceso" stackId="a" fill="#f59e0b" radius={[0, 4, 4, 0]} />
-      </BarChart>
-    </ResponsiveContainer>
-  );
-};
+          {/* Stat row */}
+          <div className="flex items-center justify-between text-[8px] font-bold uppercase tracking-widest">
+            <span className="text-emerald-600">{family.concluded} ok</span>
+            <span className="text-rose-700">{family.cancelled} cancel.</span>
+            <span
+              className="rounded-full px-1.5 py-0.5 font-black"
+              style={{ background: `${color}15`, color }}
+            >
+              {efficiency}% ef.
+            </span>
+          </div>
+        </motion.div>
+      );
+    })}
+  </div>
+);
 
 // ─── FamilyGroup ──────────────────────────────────────────────────
 const FamilyGroup: React.FC<{ family: FamilyData; index: number }> = ({ family, index }) => {
